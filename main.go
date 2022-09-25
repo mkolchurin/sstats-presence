@@ -16,13 +16,14 @@ import (
 )
 
 const (
-	getRankedMode       = "get"
-	setRankedMode       = "set"
-	pingRequest         = "ping"
+	getRankedMode       = "getRankedMode"
+	setRankedMode       = "setRankedMode"
+	pingRequest         = "pingRequest"
 	OnlineDurationInSec = 10
+	rankedParam         = "rankedMode"
 )
 
-type PlayerStateTrunc struct {
+type PlayerStateRecord struct {
 	Ranked   bool
 	LastPing int64
 }
@@ -46,7 +47,7 @@ func main() {
 		sidsRow, sidExist := c.GetQueryArray("sid")
 		sids := strings.Split(sidsRow[0], ",")
 		action := c.Param("action")
-		ranked := c.Query("ranked")
+		ranked := c.Query(rankedParam)
 		var resp []byte
 		resp = nil
 		if sidExist {
@@ -55,34 +56,13 @@ func main() {
 				resp = getRanked(sids, db, resp)
 				break
 			case setRankedMode:
-				resp, err = setRanked(sids, ranked, db, resp)
+				err = setRanked(sids, ranked, db, resp)
 				if err != nil {
 					log.Errorf("failed to set ranked '%s'", err.Error())
 				}
 				break
 			case pingRequest:
-				if len(sids) > 1 {
-					log.Infof("got more than 1 sid, process the first one, '%s'", sids)
-				}
-				stateTrunc, err := getFromDb(db, sids[0])
-				if err != nil {
-					log.WithFields(logrus.Fields{
-						"sid": sids[0],
-					}).Debugf("ping: sid not found, try create the new one")
-				}
-				stateTrunc.LastPing = time.Now().Unix()
-				encoded, err := stateTrunc.encode()
-				if err != nil {
-					log.WithFields(logrus.Fields{
-						"sid": sids[0],
-					}).Errorf("ping: failed to encode '%s'", err.Error())
-				}
-				err = saveToDb(db, sids[0], encoded)
-				if err != nil {
-					log.WithFields(logrus.Fields{
-						"sid": sids[0],
-					}).Errorf("ping: save to db is failed '%s'", err.Error())
-				}
+				setPing(db, sids)
 				break
 			default:
 				log.Errorf("Action not found '%s'", action)
@@ -102,33 +82,53 @@ func main() {
 	return
 }
 
-func setRanked(sids []string, ranked string, db *leveldb.DB, resp []byte) ([]byte, error) {
+func setPing(db *leveldb.DB, sids []string) {
+	if len(sids) > 1 {
+		log.Infof("ping: got more than 1 sid, process the first one, '%s'", sids)
+	}
+	stateTrunc, err := getFromBase(db, sids[0])
+	if err != nil {
+		log.WithFields(logrus.Fields{
+			"sid": sids[0],
+		}).Debugf("ping: sid not found, try create the new one")
+	}
+	stateTrunc.LastPing = time.Now().Unix()
+	encoded, err := stateTrunc.encode()
+	if err != nil {
+		log.WithFields(logrus.Fields{
+			"sid": sids[0],
+		}).Errorf("ping: failed to encode '%s'", err.Error())
+	}
+	err = putToBase(db, sids[0], encoded)
+	if err != nil {
+		log.WithFields(logrus.Fields{
+			"sid": sids[0],
+		}).Errorf("ping: save to db is failed '%s'", err.Error())
+	}
+}
+
+func setRanked(sids []string, ranked string, db *leveldb.DB, resp []byte) error {
 	if len(sids) > 1 {
 		log.Infof("sids more than one, apply to the first one")
 	}
 	rankedBool, err := strconv.ParseBool(ranked)
-	p := PlayerStateTrunc{rankedBool, time.Now().Unix()}
-	encodedPlayerState, err := p.encode()
+	stateRecord := PlayerStateRecord{rankedBool, time.Now().Unix()}
+	encodedPlayerState, err := stateRecord.encode()
 	if err != nil {
-		return nil, err
+		return err
 	}
-	err = saveToDb(db, sids[0], encodedPlayerState)
+	err = putToBase(db, sids[0], encodedPlayerState)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	log.Debugf("%s; ranked %t; time %s", sids[0], p.Ranked, time.Unix(p.LastPing, 0).String())
-	return resp, nil
-}
-
-func saveToDb(db *leveldb.DB, key string, value []byte) error {
-	err := db.Put([]byte(key), value, nil)
-	return err
+	log.Debugf("%s; ranked %t; time %s", sids[0], stateRecord.Ranked, time.Unix(stateRecord.LastPing, 0).String())
+	return nil
 }
 
 func getRanked(sids []string, db *leveldb.DB, resp []byte) []byte {
 	marshal := []byte("[")
 	for i, sid := range sids {
-		playerStateTruncDecoded, err := getFromDb(db, sid)
+		playerStateTruncDecoded, err := getFromBase(db, sid)
 		if err != nil {
 			continue
 		}
@@ -153,90 +153,64 @@ func getRanked(sids []string, db *leveldb.DB, resp []byte) []byte {
 	return resp
 }
 
-func (playerState *PlayerState) toPlayerState(sid string, playerStateTruncDecoded PlayerStateTrunc) {
+func (playerState *PlayerState) toPlayerState(sid string, playerStateTruncDecoded PlayerStateRecord) {
 	playerState.SID = sid
 	playerState.Online = playerStateTruncDecoded.isOnline()
 	playerState.Ranked = playerStateTruncDecoded.Ranked
 }
 
-func getFromDb(db *leveldb.DB, sid string) (PlayerStateTrunc, error) {
+func getFromBase(db *leveldb.DB, sid string) (PlayerStateRecord, error) {
 	b, err := db.Get([]byte(sid), nil)
 	if err != nil {
 		log.WithFields(logrus.Fields{
 			"sid": sid,
 		}).Debugf("get from db with error: '%s'", err.Error())
-		return PlayerStateTrunc{}, err
+		return PlayerStateRecord{}, err
 	}
-	playerStateTruncDecoded, err := decode(b)
+	playerStateTruncDecoded, err := decodeRecord(b)
 	if err != nil {
 		log.WithFields(logrus.Fields{
 			"sid": sid,
-		}).Errorf("failed decode with error '%s'", err.Error())
-		return PlayerStateTrunc{}, err
+		}).Errorf("failed decodeRecord with error '%s'", err.Error())
+		return PlayerStateRecord{}, err
 	}
 	return playerStateTruncDecoded, nil
 }
 
-func (ps PlayerStateTrunc) isOnline() bool {
-	if ps.LastPing == 0 {
+func putToBase(db *leveldb.DB, key string, value []byte) error {
+	err := db.Put([]byte(key), value, nil)
+	return err
+}
+
+func (playerRecord PlayerStateRecord) isOnline() bool {
+	if playerRecord.LastPing == 0 {
 		return false
 	}
-	lastPing := time.Unix(ps.LastPing, 0)
+	lastPing := time.Unix(playerRecord.LastPing, 0)
 	if lastPing.Add(OnlineDurationInSec*time.Second).Unix() > time.Now().Unix() {
 		return true
 	}
 	return false
 }
 
-func (state PlayerStateTrunc) encode() ([]byte, error) {
+func (playerRecord PlayerStateRecord) encode() ([]byte, error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
-	err := enc.Encode(state)
+	err := enc.Encode(playerRecord)
 	if err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
 }
 
-func decode(b []byte) (PlayerStateTrunc, error) {
+func decodeRecord(b []byte) (PlayerStateRecord, error) {
 	var buf bytes.Buffer
 	buf.Write(b)
 	dec := gob.NewDecoder(&buf)
-	var playerState PlayerStateTrunc
+	var playerState PlayerStateRecord
 	err := dec.Decode(&playerState)
 	if err != nil {
-		return PlayerStateTrunc{}, err
+		return PlayerStateRecord{}, err
 	}
 	return playerState, nil
 }
-
-//db, err := bolt.Open("presence.db", 0600, nil)
-//if err != nil {
-//	log.Fatal(err)
-//}
-//
-//err = db.Update(func(tx *bolt.Tx) error {
-//	str := Storage{}
-//	str.Ping = true
-//	str.Presence = false
-//	bucket, err := tx.CreateBucket([]byte("players"))
-//	if err != nil {
-//		return fmt.Errorf("create bucket: %s", err)
-//	}
-//	buf, _ := json.Marshal(str)
-//	err = bucket.Put([]byte("1234"), buf)
-//	if err != nil {
-//		return err
-//	}
-//	return nil
-//})
-//err = db.View(func(tx *bolt.Tx) error {
-//	bucket := tx.Bucket([]byte("players"))
-//	c := bucket.Cursor()
-//
-//	for k, v := c.First(); k != nil; k, v = c.Next() {
-//		fmt.Printf("key=%s, value=%s\n", k, v)
-//	}
-//	return nil
-//})
-//defer db.Close()
