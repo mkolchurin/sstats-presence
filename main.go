@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/gob"
 	"encoding/json"
-	"fmt"
 	"github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
+	"github.com/sirupsen/logrus"
 	"github.com/syndtr/goleveldb/leveldb"
-	"log"
+	"os"
+	"strings"
+
 	"strconv"
 	"time"
 )
@@ -20,98 +22,76 @@ const (
 	OnlineDurationInSec = 10
 )
 
-//func reqConv(ranked bool, ping bool) byte {
-//	oneIfTrue := func(e bool) byte {
-//		if e {
-//			return 1
-//		} else {
-//			return 0
-//		}
-//	}
-//	return (oneIfTrue(ranked) << 1) | (oneIfTrue(ping))
-//}
-
 type PlayerStateTrunc struct {
 	Ranked   bool
 	LastPing int64
 }
 
 type PlayerState struct {
-	SID string
-	PlayerStateTrunc
+	SID    string
+	Ranked bool
+	Online bool
 }
 
-func isOnline(ps PlayerStateTrunc) bool {
-	if ps.LastPing == 0 {
-		return false
-	}
-	lastPing := time.Unix(ps.LastPing, 0)
-	if lastPing.Add(OnlineDurationInSec*time.Second).Unix() > time.Now().Unix() {
-		return true
-	}
-	return false
-
-}
+var log = logrus.New()
 
 func main() {
+	log.Out = os.Stdout
+	log.SetLevel(logrus.DebugLevel)
+
 	db, err := leveldb.OpenFile("ps.db", nil)
 	r := gin.Default()
 	pprof.Register(r)
 	r.GET(":action", func(c *gin.Context) {
+		sidsRow, sidExist := c.GetQueryArray("sid")
+		sids := strings.Split(sidsRow[0], ",")
 		action := c.Param("action")
-		sid := c.Query("sid")
 		ranked := c.Query("ranked")
-		resp := []byte("nil")
-		switch action {
-		case getRankedMode:
-			b, err := db.Get([]byte(sid), nil)
-			if err != nil {
-				resp = []byte("nf")
+		var resp []byte
+		resp = nil
+		if sidExist {
+			switch action {
+			case getRankedMode:
+				resp = getRanked(sids, db, resp)
 				break
-			}
-			psDec, err := decode(b)
-			if err != nil {
-				return
-			}
-			log.Printf("succeed sid: %s; ranked %t; time %s;"+
-				"online %t\n\n", sid, psDec.Ranked, time.Unix(psDec.LastPing, 0).String(), isOnline(psDec))
-
-			ps := PlayerState{
-				sid, psDec,
-			}
-
-			marshal, err := json.Marshal(ps)
-			if err != nil {
-				resp = []byte("marshal failed")
-			}
-			resp = marshal
-			break
-		case setRankedMode:
-			rankedBool, err := strconv.ParseBool(ranked)
-			p := PlayerStateTrunc{rankedBool, time.Now().Unix()}
-
-			psBuf, err := encode(p)
-			if err != nil {
-				resp = []byte("encode failed")
+			case setRankedMode:
+				resp, err = setRanked(sids, ranked, db, resp)
+				if err != nil {
+					log.Errorf("failed to set ranked '%s'", err.Error())
+				}
 				break
-			}
-			err = db.Put([]byte(sid), psBuf, nil)
-			if err != nil {
-				resp = []byte("failed")
+			case pingRequest:
+				if len(sids) > 1 {
+					log.Infof("got more than 1 sid, process the first one, '%s'", sids)
+				}
+				stateTrunc, err := getFromDb(db, sids[0])
+				if err != nil {
+					log.WithFields(logrus.Fields{
+						"sid": sids[0],
+					}).Debugf("ping: sid not found, try create the new one")
+				}
+				stateTrunc.LastPing = time.Now().Unix()
+				encoded, err := stateTrunc.encode()
+				if err != nil {
+					log.WithFields(logrus.Fields{
+						"sid": sids[0],
+					}).Errorf("ping: failed to encode '%s'", err.Error())
+				}
+				err = saveToDb(db, sids[0], encoded)
+				if err != nil {
+					log.WithFields(logrus.Fields{
+						"sid": sids[0],
+					}).Errorf("ping: save to db is failed '%s'", err.Error())
+				}
 				break
+			default:
+				log.Errorf("Action not found '%s'", action)
 			}
-			resp = []byte(fmt.Sprintf("succeed sid: %s; ranked %t; time %s", sid, p.Ranked, time.Unix(p.LastPing, 0).String()))
-			//rankedBool, err := strconv.ParseBool(ranked)
-			//if err != nil {
-			//	log.Print(err)
-			//}
-			//storage[sid] = reqConv(rankedBool, false)
-			//resp = []byte(fmt.Sprintf("succeed set ranked %d", storage[sid]))
-			break
-		case pingRequest:
-			//storage[sid] = reqConv(false, true)
-			//resp = []byte(fmt.Sprintf("succeed ping %d", storage[sid]))
-			break
+		} else {
+			log.Errorf("GET: sids not found")
+		}
+		if resp == nil {
+			resp = []byte("[]")
 		}
 		c.String(200, string(resp))
 	})
@@ -122,7 +102,93 @@ func main() {
 	return
 }
 
-func encode(state PlayerStateTrunc) ([]byte, error) {
+func setRanked(sids []string, ranked string, db *leveldb.DB, resp []byte) ([]byte, error) {
+	if len(sids) > 1 {
+		log.Infof("sids more than one, apply to the first one")
+	}
+	rankedBool, err := strconv.ParseBool(ranked)
+	p := PlayerStateTrunc{rankedBool, time.Now().Unix()}
+	encodedPlayerState, err := p.encode()
+	if err != nil {
+		return nil, err
+	}
+	err = saveToDb(db, sids[0], encodedPlayerState)
+	if err != nil {
+		return nil, err
+	}
+	log.Debugf("%s; ranked %t; time %s", sids[0], p.Ranked, time.Unix(p.LastPing, 0).String())
+	return resp, nil
+}
+
+func saveToDb(db *leveldb.DB, key string, value []byte) error {
+	err := db.Put([]byte(key), value, nil)
+	return err
+}
+
+func getRanked(sids []string, db *leveldb.DB, resp []byte) []byte {
+	marshal := []byte("[")
+	for i, sid := range sids {
+		playerStateTruncDecoded, err := getFromDb(db, sid)
+		if err != nil {
+			continue
+		}
+		log.Debugf("found sid %d/%d: '%s'", i+1, len(sids), sid)
+
+		var ps PlayerState
+		ps.toPlayerState(sid, playerStateTruncDecoded)
+		subString, err := json.Marshal(ps)
+		if err != nil {
+			log.Errorf("failed json marshal: %s", sid)
+			continue
+		}
+		marshal = append(marshal, subString...)
+		if i < (len(sids) - 1) {
+			marshal = append(marshal, byte(','))
+		}
+	}
+	if marshal != nil {
+		marshal[len(marshal)-1] = ']'
+		resp = marshal
+	}
+	return resp
+}
+
+func (playerState *PlayerState) toPlayerState(sid string, playerStateTruncDecoded PlayerStateTrunc) {
+	playerState.SID = sid
+	playerState.Online = playerStateTruncDecoded.isOnline()
+	playerState.Ranked = playerStateTruncDecoded.Ranked
+}
+
+func getFromDb(db *leveldb.DB, sid string) (PlayerStateTrunc, error) {
+	b, err := db.Get([]byte(sid), nil)
+	if err != nil {
+		log.WithFields(logrus.Fields{
+			"sid": sid,
+		}).Debugf("get from db with error: '%s'", err.Error())
+		return PlayerStateTrunc{}, err
+	}
+	playerStateTruncDecoded, err := decode(b)
+	if err != nil {
+		log.WithFields(logrus.Fields{
+			"sid": sid,
+		}).Errorf("failed decode with error '%s'", err.Error())
+		return PlayerStateTrunc{}, err
+	}
+	return playerStateTruncDecoded, nil
+}
+
+func (ps PlayerStateTrunc) isOnline() bool {
+	if ps.LastPing == 0 {
+		return false
+	}
+	lastPing := time.Unix(ps.LastPing, 0)
+	if lastPing.Add(OnlineDurationInSec*time.Second).Unix() > time.Now().Unix() {
+		return true
+	}
+	return false
+}
+
+func (state PlayerStateTrunc) encode() ([]byte, error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	err := enc.Encode(state)
