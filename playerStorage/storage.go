@@ -74,6 +74,17 @@ func PutToBase(db *leveldb.DB, key string, value []byte) error {
 	return err
 }
 
+func PutToBaseEmpty(db *leveldb.DB, sid string, playerStateTruncDecoded *PlayerStateRecord) error {
+	playerStateTruncDecoded.Ranked = true
+	playerStateTruncDecoded.LastPing = 0
+	encodedPlayerState, err := playerStateTruncDecoded.Encode()
+	if err != nil {
+		return err
+	}
+	err = PutToBase(db, sid, encodedPlayerState)
+	return err
+}
+
 func DecodeRecord(b []byte) (PlayerStateRecord, error) {
 	var buf bytes.Buffer
 	buf.Write(b)
