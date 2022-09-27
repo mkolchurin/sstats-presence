@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	OnlineDurationInSec = 10
+	OnlineDurationInSec = 5
 )
 
 type PlayerStateRecord struct {

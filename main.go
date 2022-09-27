@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	tokenHeader   = "hello, zdarova"
+	tokenHeader   = "eyJSb2xlIjoiQWRtaW4iLCJJc3N1ZXIiOiJJc3N1ZXIiLCJVc2VybmFtZSI6IkphdmFJblVzZSIsImV4cCI6MTY2NDI3ODY2NCwF"
 	getRankedMode = "getRankedMode"
 	setRankedMode = "setRankedMode"
 	pingRequest   = "pingRequest"
@@ -143,6 +143,18 @@ func getRanked(sids []string, db *leveldb.DB, resp []byte) []byte {
 		}
 		var response playerStorage.PlayerStateResponse
 		response.ToPlayerState(sid, playerStateTruncDecoded)
+		if !playerStateTruncDecoded.IsOnline() {
+			response.Ranked = true
+			playerStateTruncDecoded.Ranked = true
+			encodedPlayerState, err := playerStateTruncDecoded.Encode()
+			if err != nil {
+				Log.Errorf("failed to encode ranked")
+			}
+			err = playerStorage.PutToBase(db, sid, encodedPlayerState)
+			if err != nil {
+				Log.Errorf("failed to save ranked")
+			}
+		}
 		subString, err := json.Marshal(response)
 		if err != nil {
 			Log.Errorf("failed json marshal: %s", sid)
