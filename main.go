@@ -14,6 +14,7 @@ import (
 )
 
 const (
+	tokenHeader   = "hello, zdarova"
 	getRankedMode = "getRankedMode"
 	setRankedMode = "setRankedMode"
 	pingRequest   = "pingRequest"
@@ -29,20 +30,36 @@ func main() {
 	db, err := leveldb.OpenFile("ps.db", nil)
 	r := gin.Default()
 	pprof.Register(r)
-	r.GET(":action", func(c *gin.Context) {
+	r.GET(":action", getHandler(db))
+	err = r.Run(":8081")
+	if err != nil {
+		return
+	}
+	return
+}
+
+func getHandler(db *leveldb.DB) gin.HandlerFunc {
+	fn := func(c *gin.Context) {
+		token := c.Request.Header["Token"]
+		if (token == nil) || (token[0] != tokenHeader) {
+			Log.Errorf("Wrong token '%s'", token)
+			c.String(403, "")
+			return
+		}
 		sidsRow, sidExist := c.GetQueryArray("sid")
-		sids := strings.Split(sidsRow[0], ",")
 		action := c.Param("action")
 		ranked := c.Query(rankedParam)
+
 		var resp []byte
 		resp = nil
 		if sidExist {
+			sids := strings.Split(sidsRow[0], ",")
 			switch action {
 			case getRankedMode:
 				resp = getRanked(sids, db, resp)
 				break
 			case setRankedMode:
-				err = setRanked(sids, ranked, db)
+				err := setRanked(sids, ranked, db)
 				if err != nil {
 					Log.Errorf("failed to set ranked '%s'", err.Error())
 				}
@@ -60,12 +77,9 @@ func main() {
 			resp = []byte("[]")
 		}
 		c.String(200, string(resp))
-	})
-	err = r.Run(":8080")
-	if err != nil {
-		return
 	}
-	return
+
+	return gin.HandlerFunc(fn)
 }
 
 func setPing(db *leveldb.DB, sids []string) {
@@ -76,20 +90,21 @@ func setPing(db *leveldb.DB, sids []string) {
 	if err != nil {
 		Log.WithFields(logrus.Fields{
 			"sid": sids[0],
-		}).Debugf("ping: sid not found, try create the new one")
+		}).Debugf(pingRequest + ": sid not found, try create the new one")
+		stateTrunc.Ranked = true
 	}
 	stateTrunc.LastPing = time.Now().Unix()
 	encoded, err := stateTrunc.Encode()
 	if err != nil {
 		Log.WithFields(logrus.Fields{
 			"sid": sids[0],
-		}).Errorf("ping: failed to encode '%s'", err.Error())
+		}).Errorf(pingRequest+": failed to encode '%s'", err.Error())
 	}
 	err = playerStorage.PutToBase(db, sids[0], encoded)
 	if err != nil {
 		Log.WithFields(logrus.Fields{
 			"sid": sids[0],
-		}).Errorf("ping: save to db is failed '%s'", err.Error())
+		}).Errorf(pingRequest+": save to db is failed '%s'", err.Error())
 	}
 }
 
@@ -116,10 +131,16 @@ func getRanked(sids []string, db *leveldb.DB, resp []byte) []byte {
 	for i, sid := range sids {
 		playerStateTruncDecoded, err := playerStorage.GetFromBase(db, sid)
 		if err != nil {
-			continue
+			Log.WithFields(logrus.Fields{
+				"sid": sids[0],
+			}).Debugf(getRankedMode + ": sid not found, try create the new one")
+			err := playerStorage.PutToBaseEmpty(db, sid, &playerStateTruncDecoded)
+			if err != nil {
+				Log.Errorf(getRankedMode + ": failed to create empty record")
+			}
+		} else {
+			Log.Debugf("found sid %d/%d: '%s'", i+1, len(sids), sid)
 		}
-		Log.Debugf("found sid %d/%d: '%s'", i+1, len(sids), sid)
-
 		var response playerStorage.PlayerStateResponse
 		response.ToPlayerState(sid, playerStateTruncDecoded)
 		subString, err := json.Marshal(response)
@@ -133,7 +154,7 @@ func getRanked(sids []string, db *leveldb.DB, resp []byte) []byte {
 		}
 	}
 	if marshal != nil {
-		marshal[len(marshal)-1] = ']'
+		marshal = append(marshal, byte(']'))
 		resp = marshal
 	}
 	return resp
