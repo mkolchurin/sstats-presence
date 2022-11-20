@@ -28,12 +28,19 @@ var OnlineCounter int
 
 func main() {
 	Log.Out = os.Stdout
-	Log.SetLevel(logrus.DebugLevel)
+	Log.SetLevel(logrus.ErrorLevel)
 
 	db, err := leveldb.OpenFile("ps.db", nil)
 
 	go onlineCount(db)
-	r := gin.Default()
+
+	//setup gin
+	gin.SetMode(gin.ReleaseMode)
+	r := gin.New()
+	r.Use(gin.Logger())
+
+	// Recovery middleware recovers from any panics and writes a 500 if there was one.
+	r.Use(gin.Recovery())
 	pprof.Register(r)
 	r.GET(":action", getHandler(db))
 	err = r.Run(":8081")
