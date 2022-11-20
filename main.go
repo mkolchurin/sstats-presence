@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
@@ -14,20 +15,24 @@ import (
 )
 
 const (
-	tokenHeader   = "eyJSb2xlIjoiQWRtaW4iLCJJc3N1ZXIiOiJJc3N1ZXIiLCJVc2VybmFtZSI6IkphdmFJblVzZSIsImV4cCI6MTY2NDI3ODY2NCwF"
-	getRankedMode = "getRankedMode"
-	setRankedMode = "setRankedMode"
-	pingRequest   = "pingRequest"
-	rankedParam   = "rankedMode"
+	tokenHeader     = "eyJSb2xlIjoiQWRtaW4iLCJJc3N1ZXIiOiJJc3N1ZXIiLCJVc2VybmFtZSI6IkphdmFJblVzZSIsImV4cCI6MTY2NDI3ODY2NCwF"
+	getRankedMode   = "getRankedMode"
+	setRankedMode   = "setRankedMode"
+	pingRequest     = "pingRequest"
+	rankedParam     = "rankedMode"
+	counterSleepSec = 5
 )
 
 var Log = logrus.New()
+var OnlineCounter int
 
 func main() {
 	Log.Out = os.Stdout
 	Log.SetLevel(logrus.DebugLevel)
 
 	db, err := leveldb.OpenFile("ps.db", nil)
+
+	go onlineCount(db)
 	r := gin.Default()
 	pprof.Register(r)
 	r.GET(":action", getHandler(db))
@@ -66,6 +71,7 @@ func getHandler(db *leveldb.DB) gin.HandlerFunc {
 				break
 			case pingRequest:
 				setPing(db, sids)
+				resp = []byte(fmt.Sprintf("[{\"onlineCount\":%d}]", OnlineCounter))
 				break
 			default:
 				Log.Errorf("Action not found '%s'", action)
@@ -122,8 +128,31 @@ func setRanked(sids []string, ranked string, db *leveldb.DB) error {
 	if err != nil {
 		return err
 	}
-	Log.Debugf("%s; ranked %t; time %s", sids[0], stateRecord.Ranked, time.Unix(stateRecord.LastPing, 0).String())
+
+	Log.Debugf("sid %s; ranked %t; time %s; online %d", sids[0], stateRecord.Ranked, time.Unix(stateRecord.LastPing, 0).String(), OnlineCounter)
 	return nil
+}
+
+func onlineCount(db *leveldb.DB) {
+	for {
+		time.Sleep(counterSleepSec * time.Second)
+		iter := db.NewIterator(nil, nil)
+		onlineCounter := 0
+		for iter.Next() {
+			value := iter.Value()
+			rec, _ := playerStorage.DecodeRecord(value)
+			if rec.IsOnline() {
+				onlineCounter += 1
+			}
+		}
+		iter.Release()
+		err := iter.Error()
+		if err != nil {
+			Log.Errorf("Failed to iterate db %s", err.Error())
+			continue
+		}
+		OnlineCounter = onlineCounter
+	}
 }
 
 func getRanked(sids []string, db *leveldb.DB, resp []byte) []byte {
