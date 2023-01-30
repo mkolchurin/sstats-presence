@@ -11,6 +11,8 @@ import (
 	"sstats-presence/playerStorage"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	_ "sync/atomic"
 	"time"
 )
 
@@ -24,7 +26,7 @@ const (
 )
 
 var Log = logrus.New()
-var OnlineCounter int
+var OnlineCounter int32
 
 func main() {
 	Log.Out = os.Stdout
@@ -78,7 +80,7 @@ func getHandler(db *leveldb.DB) gin.HandlerFunc {
 				break
 			case pingRequest:
 				setPing(db, sids)
-				resp = []byte(fmt.Sprintf("[{\"onlineCount\":%d}]", OnlineCounter))
+				resp = []byte(fmt.Sprintf("[{\"onlineCount\":%d}]", atomic.LoadInt32(&OnlineCounter)))
 				break
 			default:
 				Log.Errorf("Action not found '%s'", action)
@@ -140,11 +142,12 @@ func setRanked(sids []string, ranked string, db *leveldb.DB) error {
 	return nil
 }
 
+// show total online players
 func onlineCount(db *leveldb.DB) {
 	for {
 		time.Sleep(counterSleepSec * time.Second)
 		iter := db.NewIterator(nil, nil)
-		onlineCounter := 0
+		var onlineCounter int32 = 0
 		for iter.Next() {
 			value := iter.Value()
 			rec, _ := playerStorage.DecodeRecord(value)
@@ -158,19 +161,19 @@ func onlineCount(db *leveldb.DB) {
 			Log.Errorf("Failed to iterate db %s", err.Error())
 			continue
 		}
-		OnlineCounter = onlineCounter
+		atomic.StoreInt32(&OnlineCounter, onlineCounter)
 	}
 }
 
 func getRanked(sids []string, db *leveldb.DB, resp []byte) []byte {
 	marshal := []byte("[")
 	for i, sid := range sids {
-		playerStateTruncDecoded, err := playerStorage.GetFromBase(db, sid)
+		playerStateRecord, err := playerStorage.GetFromBase(db, sid)
 		if err != nil {
 			Log.WithFields(logrus.Fields{
 				"sid": sids[0],
 			}).Debugf(getRankedMode + ": sid not found, try create the new one")
-			err := playerStorage.PutToBaseEmpty(db, sid, &playerStateTruncDecoded)
+			err := playerStorage.PutToBaseEmpty(db, sid, &playerStateRecord)
 			if err != nil {
 				Log.Errorf(getRankedMode + ": failed to create empty record")
 			}
@@ -178,11 +181,11 @@ func getRanked(sids []string, db *leveldb.DB, resp []byte) []byte {
 			Log.Debugf("found sid %d/%d: '%s'", i+1, len(sids), sid)
 		}
 		var response playerStorage.PlayerStateResponse
-		response.ToPlayerState(sid, playerStateTruncDecoded)
-		if !playerStateTruncDecoded.IsOnline() {
+		response.ToPlayerState(sid, playerStateRecord)
+		if !playerStateRecord.IsOnline() {
 			response.Ranked = true
-			playerStateTruncDecoded.Ranked = true
-			encodedPlayerState, err := playerStateTruncDecoded.Encode()
+			playerStateRecord.Ranked = true
+			encodedPlayerState, err := playerStateRecord.Encode()
 			if err != nil {
 				Log.Errorf("failed to encode ranked")
 			}
