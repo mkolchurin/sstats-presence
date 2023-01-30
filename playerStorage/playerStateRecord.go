@@ -18,18 +18,6 @@ type PlayerStateRecord struct {
 	LastPing int64
 }
 
-type PlayerStateResponse struct {
-	SID    string
-	Ranked bool
-	Online bool
-}
-
-func (playerState *PlayerStateResponse) ToPlayerState(sid string, playerStateTruncDecoded PlayerStateRecord) {
-	playerState.SID = sid
-	playerState.Online = playerStateTruncDecoded.IsOnline()
-	playerState.Ranked = playerStateTruncDecoded.Ranked
-}
-
 func (playerRecord PlayerStateRecord) IsOnline() bool {
 	if playerRecord.LastPing == 0 {
 		return false
