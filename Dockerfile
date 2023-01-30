@@ -1,9 +1,18 @@
 # syntax=docker/dockerfile:1
+FROM golang:alpine AS builder
 
-FROM golang:latest
-RUN mkdir /app
-ADD . /app/
-WORKDIR /app
+WORKDIR /build
+
+ADD go.mod .
+
+COPY . .
+
+RUN go build -o sstats-presence main.go
+
+FROM alpine
+
+WORKDIR /build
 EXPOSE 8081
-RUN go build -o main .
-CMD ["/app/main"]
+COPY --from=builder /build/sstats-presence /build/sstats-presence
+
+CMD ["./sstats-presence"]
