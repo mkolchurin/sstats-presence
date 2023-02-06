@@ -4,11 +4,8 @@ import (
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/assert/v2"
-	"github.com/sirupsen/logrus"
-	"github.com/syndtr/goleveldb/leveldb"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"sstats-presence/playerStorage"
 	"testing"
 	"time"
@@ -50,42 +47,30 @@ const (
 )
 
 func TestLoadPing(t *testing.T) {
-	_ = os.Remove(testDbName)
 	r := gin.Default()
-	db, err := leveldb.OpenFile(testDbName, nil)
-	if err != nil {
-		logrus.Errorf("failed to open/create db")
-	}
+	r.GET(":action", getHandler(playersMap))
 
-	r.GET(":action", getHandler(db))
-
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 500; i++ {
 		httpReqGET(t, r, pingRequest+"?sid="+fmt.Sprint(i), `[{"onlineCount":`+fmt.Sprint(i)+`, "modArray": [{"ModName":"dxp2","OnlineCount":`+fmt.Sprint(i)+`},{"ModName":"dowstats_balance_mod","OnlineCount":0},{"ModName":"tournamentpatch","OnlineCount":0},{"ModName":"othermod","OnlineCount":0}]}]`)
-		countOnlineUsers(db, len(OnlineCounter))
+		countOnlineUsers(playersMap, len(OnlineCounter))
 	}
 
 }
 
 func TestAPI(t *testing.T) {
-	_ = os.Remove(testDbName)
 	r := gin.Default()
-	db, err := leveldb.OpenFile(testDbName, nil)
-	if err != nil {
-		logrus.Errorf("failed to open/create db")
-	}
-
-	r.GET(":action", getHandler(db))
+	r.GET(":action", getHandler(playersMap))
 
 	httpReqGET(t, r, Q_ping4, R_pingZero)
-	countOnlineUsers(db, len(OnlineCounter))
+	countOnlineUsers(playersMap, len(OnlineCounter))
 	httpReqGET(t, r, Q_ping4, R_pingNoMod)
-	countOnlineUsers(db, len(OnlineCounter))
+	countOnlineUsers(playersMap, len(OnlineCounter))
 	httpReqGET(t, r, Q_ping5ModDowstats, R_pingOnlineDxp2_1)
-	countOnlineUsers(db, len(OnlineCounter))
+	countOnlineUsers(playersMap, len(OnlineCounter))
 	httpReqGET(t, r, Q_ping6ModDowstats, R_pingOnlineDxp2_1_Dowstats_balance_mod_1)
-	countOnlineUsers(db, len(OnlineCounter))
+	countOnlineUsers(playersMap, len(OnlineCounter))
 	httpReqGET(t, r, Q_ping7tournament, R_pingOnlineDxp2_2_Dowstats_balance_mod_2)
-	countOnlineUsers(db, len(OnlineCounter))
+	countOnlineUsers(playersMap, len(OnlineCounter))
 	httpReqGET(t, r, Q_ping4, R_pingOnlineDxp2_2_Dowstats_balance_mod_2_tournamentpatch_1)
 
 	httpReqGET(t, r, Q_getRanked4, R_getRanked4)

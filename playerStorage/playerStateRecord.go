@@ -5,7 +5,7 @@ import (
 	"encoding/gob"
 	"github.com/sirupsen/logrus"
 	Log "github.com/sirupsen/logrus"
-	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/syndtr/goleveldb/leveldb/errors"
 	"time"
 )
 
@@ -40,13 +40,13 @@ func (playerRecord PlayerStateRecord) Encode() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func GetFromBase(db *leveldb.DB, sid string) (PlayerStateRecord, error) {
-	b, err := db.Get([]byte(sid), nil)
-	if err != nil {
+func GetFromBase(playersMap map[string][]byte, sid string) (PlayerStateRecord, error) {
+	b := dbGet(playersMap, sid)
+	if b == nil {
 		Log.WithFields(logrus.Fields{
 			"sid": sid,
-		}).Debugf("get from db with error: '%s'", err.Error())
-		return PlayerStateRecord{}, err
+		}).Debugf("get from db nil")
+		return PlayerStateRecord{}, errors.ErrNotFound
 	}
 	playerStateTruncDecoded, err := DecodeRecord(b)
 	if err != nil {
@@ -58,19 +58,19 @@ func GetFromBase(db *leveldb.DB, sid string) (PlayerStateRecord, error) {
 	return playerStateTruncDecoded, nil
 }
 
-func PutToBase(db *leveldb.DB, key string, value []byte) error {
-	err := db.Put([]byte(key), value, nil)
+func PutToBase(playersMap map[string][]byte, key string, value []byte) error {
+	err := dbPut(playersMap, key, value)
 	return err
 }
 
-func PutToBaseEmpty(db *leveldb.DB, sid string, playerStateTruncDecoded *PlayerStateRecord) error {
+func PutToBaseEmpty(playersMap map[string][]byte, sid string, playerStateTruncDecoded *PlayerStateRecord) error {
 	playerStateTruncDecoded.Ranked = true
 	playerStateTruncDecoded.LastPing = 0
 	encodedPlayerState, err := playerStateTruncDecoded.Encode()
 	if err != nil {
 		return err
 	}
-	err = PutToBase(db, sid, encodedPlayerState)
+	err = PutToBase(playersMap, sid, encodedPlayerState)
 	return err
 }
 
@@ -84,4 +84,13 @@ func DecodeRecord(b []byte) (PlayerStateRecord, error) {
 		return PlayerStateRecord{}, err
 	}
 	return playerState, nil
+}
+
+func dbPut(playersMap map[string][]byte, key string, value []byte) error {
+	playersMap[key] = value
+	return nil
+}
+func dbGet(playersMap map[string][]byte, sid string) []byte {
+	b := playersMap[sid]
+	return b
 }

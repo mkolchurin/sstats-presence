@@ -6,7 +6,6 @@ import (
 	"github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
-	"github.com/syndtr/goleveldb/leveldb"
 	"os"
 	"sstats-presence/playerStorage"
 	"strconv"
@@ -17,7 +16,7 @@ import (
 )
 
 const (
-	tokenHeader     = "eyJSb2xlIjoiQWRtaW4iLCJJc3N1ZXIiOiJJc3N1ZXIiLCJVc2VybmFtZSI6IkphdmFJblVzZSIsImV4cCI6MTY2NDI3ODY2NCwF"
+	tokenHeader     = ""
 	getRankedMode   = "getRankedMode"
 	setRankedMode   = "setRankedMode"
 	pingRequest     = "pingRequest"
@@ -35,14 +34,20 @@ func init() {
 	OnlineCounter = make([]int32, len(modList))
 }
 
+var playersMap map[string][]byte
+
+func init() {
+	playersMap = make(map[string][]byte)
+}
+
 func main() {
 	Log.Out = os.Stdout
 	Log.SetLevel(logrus.ErrorLevel)
 
-	db, err := leveldb.OpenFile("ps.db", nil)
+	//db, err := leveldb.OpenFile("ps.db", nil)
 	go func() {
 		for {
-			countOnlineUsers(db, len(OnlineCounter))
+			countOnlineUsers(playersMap, len(OnlineCounter))
 			time.Sleep(counterSleepSec * time.Second)
 		}
 	}()
@@ -55,15 +60,15 @@ func main() {
 	// Recovery middleware recovers from any panics and writes a 500 if there was one.
 	r.Use(gin.Recovery())
 	pprof.Register(r)
-	r.GET(":action", getHandler(db))
-	err = r.Run(":8081")
+	r.GET(":action", getHandler(playersMap))
+	err := r.Run(":8081")
 	if err != nil {
 		return
 	}
 	return
 }
 
-func getHandler(db *leveldb.DB) gin.HandlerFunc {
+func getHandler(playersMap map[string][]byte) gin.HandlerFunc {
 	fn := func(c *gin.Context) {
 		token := c.Request.Header["Token"]
 		if (token == nil) || (token[0] != tokenHeader) {
@@ -81,16 +86,16 @@ func getHandler(db *leveldb.DB) gin.HandlerFunc {
 			sids := strings.Split(sidsRow[0], ",")
 			switch action {
 			case getRankedMode:
-				resp = processGetRanked(sids, db, resp)
+				resp = processGetRanked(sids, playersMap, resp)
 				break
 			case setRankedMode:
-				err := processSetRanked(sids, ranked, db)
+				err := processSetRanked(sids, ranked, playersMap)
 				if err != nil {
 					Log.Errorf("failed to set ranked '%s'", err.Error())
 				}
 				break
 			case pingRequest:
-				processPingReq(db, sids, gameMod)
+				processPingReq(playersMap, sids, gameMod)
 				resp = []byte(onlineUsersResponse())
 				break
 			default:
@@ -124,11 +129,11 @@ func getModInt(modName string) int {
 	return 0
 }
 
-func processPingReq(db *leveldb.DB, sids []string, gameMod string) {
+func processPingReq(playersMap map[string][]byte, sids []string, gameMod string) {
 	if len(sids) > 1 {
 		Log.Infof("ping: got more than 1 sid, process the first one, '%s'", sids)
 	}
-	stateTrunc, err := playerStorage.GetFromBase(db, sids[0])
+	stateTrunc, err := playerStorage.GetFromBase(playersMap, sids[0])
 	if err != nil {
 		Log.WithFields(logrus.Fields{
 			"sid": sids[0],
@@ -143,7 +148,7 @@ func processPingReq(db *leveldb.DB, sids []string, gameMod string) {
 			"sid": sids[0],
 		}).Errorf(pingRequest+": failed to encode '%s'", err.Error())
 	}
-	err = playerStorage.PutToBase(db, sids[0], encoded)
+	err = playerStorage.PutToBase(playersMap, sids[0], encoded)
 	if err != nil {
 		Log.WithFields(logrus.Fields{
 			"sid": sids[0],
@@ -151,7 +156,7 @@ func processPingReq(db *leveldb.DB, sids []string, gameMod string) {
 	}
 }
 
-func processSetRanked(sids []string, ranked string, db *leveldb.DB) error {
+func processSetRanked(sids []string, ranked string, playersMap map[string][]byte) error {
 	if len(sids) > 1 {
 		Log.Infof("sids more than one, apply to the first one")
 	}
@@ -161,7 +166,7 @@ func processSetRanked(sids []string, ranked string, db *leveldb.DB) error {
 	if err != nil {
 		return err
 	}
-	err = playerStorage.PutToBase(db, sids[0], encodedPlayerState)
+	err = playerStorage.PutToBase(playersMap, sids[0], encodedPlayerState)
 	if err != nil {
 		return err
 	}
@@ -171,21 +176,14 @@ func processSetRanked(sids []string, ranked string, db *leveldb.DB) error {
 }
 
 // show total online players
-func countOnlineUsers(db *leveldb.DB, modsCount int) {
+func countOnlineUsers(playersMap map[string][]byte, modsCount int) {
 	LocalCounter := make([]int32, modsCount)
-	iter := db.NewIterator(nil, nil)
-	for iter.Next() {
-		value := iter.Value()
-		rec, _ := playerStorage.DecodeRecord(value)
+
+	for _, player := range playersMap {
+		rec, _ := playerStorage.DecodeRecord(player)
 		if rec.IsOnline() {
 			LocalCounter[rec.Mod] += 1
 		}
-	}
-	iter.Release()
-	err := iter.Error()
-	if err != nil {
-		Log.Errorf("Failed to iterate db %s", err.Error())
-		return
 	}
 	for i := 0; i < modsCount; i++ {
 		atomic.StoreInt32(&OnlineCounter[i], LocalCounter[i])
@@ -215,15 +213,15 @@ func onlineUsersResponse() string {
 
 }
 
-func processGetRanked(sids []string, db *leveldb.DB, resp []byte) []byte {
+func processGetRanked(sids []string, playersMap map[string][]byte, resp []byte) []byte {
 	marshal := []byte("[")
 	for i, sid := range sids {
-		playerStateRecord, err := playerStorage.GetFromBase(db, sid)
+		playerStateRecord, err := playerStorage.GetFromBase(playersMap, sid)
 		if err != nil {
 			Log.WithFields(logrus.Fields{
 				"sid": sids[0],
 			}).Debugf(getRankedMode + ": sid not found, try create the new one")
-			err := playerStorage.PutToBaseEmpty(db, sid, &playerStateRecord)
+			err := playerStorage.PutToBaseEmpty(playersMap, sid, &playerStateRecord)
 			if err != nil {
 				Log.Errorf(getRankedMode + ": failed to create empty record")
 			}
@@ -239,7 +237,7 @@ func processGetRanked(sids []string, db *leveldb.DB, resp []byte) []byte {
 			if err != nil {
 				Log.Errorf("failed to encode ranked")
 			}
-			err = playerStorage.PutToBase(db, sid, encodedPlayerState)
+			err = playerStorage.PutToBase(playersMap, sid, encodedPlayerState)
 			if err != nil {
 				Log.Errorf("failed to save ranked")
 			}
