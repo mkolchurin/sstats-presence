@@ -40,7 +40,12 @@ func main() {
 	Log.SetLevel(logrus.ErrorLevel)
 
 	db, err := leveldb.OpenFile("ps.db", nil)
-	go countOnlineUsers(db, len(OnlineCounter))
+	go func() {
+		for {
+			countOnlineUsers(db, len(OnlineCounter))
+			time.Sleep(counterSleepSec * time.Second)
+		}
+	}()
 
 	//setup gin
 	gin.SetMode(gin.ReleaseMode)
@@ -167,26 +172,23 @@ func processSetRanked(sids []string, ranked string, db *leveldb.DB) error {
 
 // show total online players
 func countOnlineUsers(db *leveldb.DB, modsCount int) {
-	for {
-		LocalCounter := make([]int32, modsCount)
-		iter := db.NewIterator(nil, nil)
-		for iter.Next() {
-			value := iter.Value()
-			rec, _ := playerStorage.DecodeRecord(value)
-			if rec.IsOnline() {
-				LocalCounter[rec.Mod] += 1
-			}
+	LocalCounter := make([]int32, modsCount)
+	iter := db.NewIterator(nil, nil)
+	for iter.Next() {
+		value := iter.Value()
+		rec, _ := playerStorage.DecodeRecord(value)
+		if rec.IsOnline() {
+			LocalCounter[rec.Mod] += 1
 		}
-		iter.Release()
-		err := iter.Error()
-		if err != nil {
-			Log.Errorf("Failed to iterate db %s", err.Error())
-			continue
-		}
-		for i := 0; i < modsCount; i++ {
-			atomic.StoreInt32(&OnlineCounter[i], LocalCounter[i])
-		}
-		time.Sleep(counterSleepSec * time.Second)
+	}
+	iter.Release()
+	err := iter.Error()
+	if err != nil {
+		Log.Errorf("Failed to iterate db %s", err.Error())
+		return
+	}
+	for i := 0; i < modsCount; i++ {
+		atomic.StoreInt32(&OnlineCounter[i], LocalCounter[i])
 	}
 }
 
