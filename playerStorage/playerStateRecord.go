@@ -16,6 +16,7 @@ const (
 type PlayerStateRecord struct {
 	Ranked   bool
 	LastPing int64
+	Mod      int32
 }
 
 func (playerRecord PlayerStateRecord) IsOnline() bool {

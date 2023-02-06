@@ -22,19 +22,25 @@ const (
 	setRankedMode   = "setRankedMode"
 	pingRequest     = "pingRequest"
 	rankedParam     = "rankedMode"
+	modParam        = "gameMod"
 	counterSleepSec = 5
 )
 
+var modList = []string{"dxp2", "dowstats_balance_mod", "tournamentpatch", "othermod"}
+var OnlineCounter []int32
+
 var Log = logrus.New()
-var OnlineCounter int32
+
+func init() {
+	OnlineCounter = make([]int32, len(modList))
+}
 
 func main() {
 	Log.Out = os.Stdout
 	Log.SetLevel(logrus.ErrorLevel)
 
 	db, err := leveldb.OpenFile("ps.db", nil)
-
-	go onlineCount(db)
+	go countOnlineUsers(db, len(OnlineCounter))
 
 	//setup gin
 	gin.SetMode(gin.ReleaseMode)
@@ -63,24 +69,24 @@ func getHandler(db *leveldb.DB) gin.HandlerFunc {
 		sidsRow, sidExist := c.GetQueryArray("sid")
 		action := c.Param("action")
 		ranked := c.Query(rankedParam)
-
+		gameMod := c.Query(modParam)
 		var resp []byte
 		resp = nil
 		if sidExist {
 			sids := strings.Split(sidsRow[0], ",")
 			switch action {
 			case getRankedMode:
-				resp = getRanked(sids, db, resp)
+				resp = processGetRanked(sids, db, resp)
 				break
 			case setRankedMode:
-				err := setRanked(sids, ranked, db)
+				err := processSetRanked(sids, ranked, db)
 				if err != nil {
 					Log.Errorf("failed to set ranked '%s'", err.Error())
 				}
 				break
 			case pingRequest:
-				setPing(db, sids)
-				resp = []byte(fmt.Sprintf("[{\"onlineCount\":%d}]", atomic.LoadInt32(&OnlineCounter)))
+				processPingReq(db, sids, gameMod)
+				resp = []byte(onlineUsersResponse())
 				break
 			default:
 				Log.Errorf("Action not found '%s'", action)
@@ -97,7 +103,23 @@ func getHandler(db *leveldb.DB) gin.HandlerFunc {
 	return gin.HandlerFunc(fn)
 }
 
-func setPing(db *leveldb.DB, sids []string) {
+func getModString(modInd int) string {
+	if modInd >= len(modList) {
+		return "othermod"
+	}
+	return modList[modInd]
+}
+
+func getModInt(modName string) int {
+	for i, v := range modList {
+		if v == modName {
+			return i
+		}
+	}
+	return 0
+}
+
+func processPingReq(db *leveldb.DB, sids []string, gameMod string) {
 	if len(sids) > 1 {
 		Log.Infof("ping: got more than 1 sid, process the first one, '%s'", sids)
 	}
@@ -108,6 +130,7 @@ func setPing(db *leveldb.DB, sids []string) {
 		}).Debugf(pingRequest + ": sid not found, try create the new one")
 		stateTrunc.Ranked = true
 	}
+	stateTrunc.Mod = int32(getModInt(gameMod))
 	stateTrunc.LastPing = time.Now().Unix()
 	encoded, err := stateTrunc.Encode()
 	if err != nil {
@@ -123,7 +146,7 @@ func setPing(db *leveldb.DB, sids []string) {
 	}
 }
 
-func setRanked(sids []string, ranked string, db *leveldb.DB) error {
+func processSetRanked(sids []string, ranked string, db *leveldb.DB) error {
 	if len(sids) > 1 {
 		Log.Infof("sids more than one, apply to the first one")
 	}
@@ -138,21 +161,20 @@ func setRanked(sids []string, ranked string, db *leveldb.DB) error {
 		return err
 	}
 
-	Log.Debugf("sid %s; ranked %t; time %s; online %d", sids[0], stateRecord.Ranked, time.Unix(stateRecord.LastPing, 0).String(), OnlineCounter)
+	Log.Debugf("sid %s; ranked %t; time %s; online %d", sids[0], stateRecord.Ranked, time.Unix(stateRecord.LastPing, 0).String(), OnlineCounter[0])
 	return nil
 }
 
 // show total online players
-func onlineCount(db *leveldb.DB) {
+func countOnlineUsers(db *leveldb.DB, modsCount int) {
 	for {
-		time.Sleep(counterSleepSec * time.Second)
+		LocalCounter := make([]int32, modsCount)
 		iter := db.NewIterator(nil, nil)
-		var onlineCounter int32 = 0
 		for iter.Next() {
 			value := iter.Value()
 			rec, _ := playerStorage.DecodeRecord(value)
 			if rec.IsOnline() {
-				onlineCounter += 1
+				LocalCounter[rec.Mod] += 1
 			}
 		}
 		iter.Release()
@@ -161,11 +183,37 @@ func onlineCount(db *leveldb.DB) {
 			Log.Errorf("Failed to iterate db %s", err.Error())
 			continue
 		}
-		atomic.StoreInt32(&OnlineCounter, onlineCounter)
+		for i := 0; i < modsCount; i++ {
+			atomic.StoreInt32(&OnlineCounter[i], LocalCounter[i])
+		}
+		time.Sleep(counterSleepSec * time.Second)
 	}
 }
 
-func getRanked(sids []string, db *leveldb.DB, resp []byte) []byte {
+func onlineUsersResponse() string {
+	var totalOnline int32 = 0
+	resp := ""
+	for i := 0; i < len(OnlineCounter); i++ {
+		totalOnline += OnlineCounter[i]
+		s, err := json.Marshal(struct {
+			ModName     string
+			OnlineCount int
+		}{
+			ModName:     getModString(i),
+			OnlineCount: int(OnlineCounter[i]),
+		})
+		if err != nil {
+			Log.Errorf("Failed to parse %s", err.Error())
+			continue
+		}
+		resp += string(s) + ","
+	}
+	resp = strings.TrimSuffix(resp, ",")
+	return fmt.Sprintf(`[{"onlineCount":%d, "modArray": [%s]}]`, totalOnline, resp)
+
+}
+
+func processGetRanked(sids []string, db *leveldb.DB, resp []byte) []byte {
 	marshal := []byte("[")
 	for i, sid := range sids {
 		playerStateRecord, err := playerStorage.GetFromBase(db, sid)

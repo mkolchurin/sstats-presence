@@ -16,8 +16,6 @@ import (
 
 const (
 	testDbName = "test.db"
-	host       = "localhost"
-	port       = ":8080"
 )
 
 const (
@@ -32,9 +30,13 @@ const (
 	Q_getRanked1_2_3     = getRankedMode + "?sid=1,2,3"
 	Q_ping4              = pingRequest + "?sid=4"
 	Q_getRanked4         = getRankedMode + "?sid=4"
+	Q_ping3              = pingRequest + "?sid=3"
+	Q_ping5ModDowstats   = pingRequest + "?sid=3&" + modParam + "=dowstats_balance_mod"
 
-	R_empty                      = "[]"
-	R_ping4                      = `[{"onlineCount":0}]`
+	R_empty    = "[]"
+	R_pingZero = `[{"onlineCount":0, "modArray": [{"ModName":"dxp2","OnlineCount":0},{"ModName":"dowstats_balance_mod","OnlineCount":0},{"ModName":"dournamentpath","OnlineCount":0},{"ModName":"othermod","OnlineCount":0}]}]`
+	R_ping3    = `[{"onlineCount":1, "modArray": [{"ModName":"dxp2","OnlineCount":1},{"ModName":"dowstats_balance_mod","OnlineCount":0},{"ModName":"dournamentpath","OnlineCount":0},{"ModName":"othermod","OnlineCount":0}]}]`
+
 	R_getRanked4                 = `[{"SID":"4","Ranked":true,"Online":true}]`
 	R_getRanked1Fast             = `[{"SID":"1","Ranked":true,"Online":true}]`
 	R_getRanked2Unranked         = `[{"SID":"2","Ranked":false,"Online":true}]`
@@ -50,9 +52,17 @@ func TestAPI(t *testing.T) {
 	if err != nil {
 		logrus.Errorf("failed to open/create db")
 	}
+	go countOnlineUsers(db, len(OnlineCounter))
 	r.GET(":action", getHandler(db))
 
-	httpReqGET(t, r, Q_ping4, R_ping4)
+	httpReqGET(t, r, Q_ping4, R_pingZero)
+	time.Sleep(1)
+	httpReqGET(t, r, Q_ping3, R_ping3)
+	httpReqGET(t, r, Q_ping3, R_ping3)
+	httpReqGET(t, r, Q_ping5ModDowstats, R_ping3)
+
+	//time.Sleep(2)
+
 	httpReqGET(t, r, Q_getRanked4, R_getRanked4)
 	httpReqGET(t, r, Q_setRanked1, R_empty)
 	httpReqGET(t, r, Q_setRanked2, R_empty)
