@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	tokenHeader     = "eyJSb2xlIjoiQWRtaW4iLCJJc3N1ZXIiOiJJc3N1ZXIiLCJVc2VybmFtZSI6IkphdmFJblVzZSIsImV4cCI6MTY2NDI3ODY2NCwF"
+	tokenHeader     = ""
 	getRankedMode   = "getRankedMode"
 	setRankedMode   = "setRankedMode"
 	pingRequest     = "pingRequest"
@@ -108,20 +108,17 @@ func getHandler(db *leveldb.DB) gin.HandlerFunc {
 	return gin.HandlerFunc(fn)
 }
 
-func getModString(modInd int) string {
-	if modInd >= len(modList) {
-		return "othermod"
-	}
-	return modList[modInd]
-}
-
 func getModInt(modName string) int {
+
+	if modName == "" {
+		return 0
+	}
 	for i, v := range modList {
 		if v == modName {
 			return i
 		}
 	}
-	return 0
+	return int(len(modList) - 1)
 }
 
 func processPingReq(db *leveldb.DB, sids []string, gameMod string) {
@@ -201,7 +198,12 @@ func onlineUsersResponse() string {
 			ModName     string
 			OnlineCount int
 		}{
-			ModName:     getModString(i),
+			ModName: func(modInd int) string {
+				//if modInd >= len(modList) {
+				//	return "othermod"
+				//}
+				return modList[modInd]
+			}(i),
 			OnlineCount: int(OnlineCounter[i]),
 		})
 		if err != nil {
