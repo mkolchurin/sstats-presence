@@ -7,10 +7,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 	"github.com/syndtr/goleveldb/leveldb"
+	"log"
 	"os"
 	"sstats-presence/playerStorage"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	_ "sync/atomic"
 	"time"
@@ -27,6 +29,7 @@ const (
 )
 
 var modList = []string{"dxp2", "dowstats_balance_mod", "tournamentpatch", "othermod"}
+var modTextList = []string{"Dawn of War - Soulstorm", "DoW Stats Balance Mod", "TournamentPatch", "Other mods"}
 var OnlineCounter []int32
 
 var Log = logrus.New()
@@ -35,11 +38,17 @@ func init() {
 	OnlineCounter = make([]int32, len(modList))
 }
 
+type UniqUsers struct {
+	UsersYear  int
+	UsersMonth int
+	UsersDay   int
+}
+
 func main() {
 	Log.Out = os.Stdout
 	Log.SetLevel(logrus.ErrorLevel)
 
-	db, err := leveldb.OpenFile("ps.db", nil)
+	db, err := leveldb.OpenFile("sspresence/onlinedb", nil)
 	go func() {
 		for {
 			countOnlineUsers(db, len(OnlineCounter))
@@ -55,7 +64,9 @@ func main() {
 	// Recovery middleware recovers from any panics and writes a 500 if there was one.
 	r.Use(gin.Recovery())
 	pprof.Register(r)
+	r.GET("uniq", getUniq(db))
 	r.GET(":action", getHandler(db))
+
 	err = r.Run(":8081")
 	if err != nil {
 		return
@@ -199,10 +210,7 @@ func onlineUsersResponse() string {
 			OnlineCount int
 		}{
 			ModName: func(modInd int) string {
-				//if modInd >= len(modList) {
-				//	return "othermod"
-				//}
-				return modList[modInd]
+				return modTextList[modInd]
 			}(i),
 			OnlineCount: int(OnlineCounter[i]),
 		})
@@ -214,7 +222,50 @@ func onlineUsersResponse() string {
 	}
 	resp = strings.TrimSuffix(resp, ",")
 	return fmt.Sprintf(`[{"onlineCount":%d, "modArray": [%s]}]`, totalOnline, resp)
+}
 
+var mux = sync.Mutex{}
+
+func countUniqUsers(db *leveldb.DB) UniqUsers {
+	mux.Lock()
+	uniq := UniqUsers{
+		0, 0, 0,
+	}
+	iter := db.NewIterator(nil, nil)
+	defer iter.Release()
+
+	for iter.Next() {
+		value := iter.Value()
+		record, err := playerStorage.DecodeRecord(value)
+		if err != nil {
+			Log.Errorf("Failed to decode record %s", err.Error())
+		}
+		currentTime := time.Now().Unix()
+		if time.Unix(record.LastPing, 0).Year() == time.Unix(currentTime, 0).Year() {
+			uniq.UsersYear += 1
+			if time.Unix(record.LastPing, 0).Month() == time.Unix(currentTime, 0).Month() {
+				uniq.UsersMonth += 1
+				if time.Unix(record.LastPing, 0).Day() == time.Unix(currentTime, 0).Day() {
+					uniq.UsersDay += 1
+				}
+			}
+		}
+	}
+
+	if err := iter.Error(); err != nil {
+		log.Fatal(err)
+	}
+	mux.Unlock()
+	return uniq
+}
+
+func getUniq(db *leveldb.DB) gin.HandlerFunc {
+	fn := func(c *gin.Context) {
+		u := countUniqUsers(db)
+		str := fmt.Sprintf("{\"day\": %d, \"month\": %d, \"year\": %d }", u.UsersDay, u.UsersMonth, u.UsersYear)
+		c.String(200, str)
+	}
+	return gin.HandlerFunc(fn)
 }
 
 func processGetRanked(sids []string, db *leveldb.DB, resp []byte) []byte {
@@ -236,15 +287,6 @@ func processGetRanked(sids []string, db *leveldb.DB, resp []byte) []byte {
 		response.ToPlayerState(sid, playerStateRecord)
 		if !playerStateRecord.IsOnline() {
 			response.Ranked = true
-			playerStateRecord.Ranked = true
-			encodedPlayerState, err := playerStateRecord.Encode()
-			if err != nil {
-				Log.Errorf("failed to encode ranked")
-			}
-			err = playerStorage.PutToBase(db, sid, encodedPlayerState)
-			if err != nil {
-				Log.Errorf("failed to save ranked")
-			}
 		}
 		subString, err := json.Marshal(response)
 		if err != nil {

@@ -67,9 +67,40 @@ func TestLoadPing(t *testing.T) {
 	}
 
 }
+func TestTime(t *testing.T) {
+	err := os.RemoveAll(testDbName)
+	if err != nil {
+		Log.Fatalf("Cannot delete folder '%s'", err.Error())
+	}
+	r := gin.Default()
+	db, err := leveldb.OpenFile(testDbName, nil)
+	if err != nil {
+		logrus.Errorf("failed to open/create db")
+	}
+	r.GET("uniq", getUniq(db))
+	r.GET(":action", getHandler(db))
+
+	//test
+	httpReqGET(t, r, "uniq", "{\"day\": 0, \"month\": 0, \"year\": 0 }")
+	httpReqGET(t, r, "uniq", "{\"day\": 0, \"month\": 0, \"year\": 0 }")
+
+	httpReqGET(t, r, Q_ping4, R_pingZero)
+	httpReqGET(t, r, "uniq", "{\"day\": 1, \"month\": 1, \"year\": 1 }")
+	httpReqGET(t, r, Q_ping4, R_pingZero)
+	httpReqGET(t, r, "uniq", "{\"day\": 1, \"month\": 1, \"year\": 1 }")
+
+	httpReqGET(t, r, Q_ping3, R_pingZero)
+	httpReqGET(t, r, Q_ping5ModDowstats, R_pingZero)
+	httpReqGET(t, r, "uniq", "{\"day\": 3, \"month\": 3, \"year\": 3 }")
+
+}
 
 func TestAPI(t *testing.T) {
-	_ = os.Remove(testDbName)
+	err := os.RemoveAll(testDbName)
+	if err != nil {
+		Log.Fatalf("Cannot delete folder '%s'", err.Error())
+	}
+
 	r := gin.Default()
 	db, err := leveldb.OpenFile(testDbName, nil)
 	if err != nil {
@@ -114,6 +145,7 @@ func TestAPI(t *testing.T) {
 
 	//await online check end
 	<-c
+
 	return
 }
 

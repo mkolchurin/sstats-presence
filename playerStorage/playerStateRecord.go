@@ -60,6 +60,7 @@ func GetFromBase(db *leveldb.DB, sid string) (PlayerStateRecord, error) {
 
 func PutToBase(db *leveldb.DB, key string, value []byte) error {
 	err := db.Put([]byte(key), value, nil)
+
 	return err
 }
 
