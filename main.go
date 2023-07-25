@@ -27,6 +27,7 @@ const (
 )
 
 var modList = []string{"dxp2", "dowstats_balance_mod", "tournamentpatch", "othermod"}
+var modTextList = []string{"Dawn of War - Soulstorm", "DoW Stats Balance Mod", "TournamentPatch", "Other mods"}
 var OnlineCounter []int32
 
 var Log = logrus.New()
@@ -202,7 +203,7 @@ func onlineUsersResponse() string {
 				//if modInd >= len(modList) {
 				//	return "othermod"
 				//}
-				return modList[modInd]
+				return modTextList[modInd]
 			}(i),
 			OnlineCount: int(OnlineCounter[i]),
 		})
