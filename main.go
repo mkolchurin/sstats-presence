@@ -29,7 +29,9 @@ const (
 )
 
 var modList = []string{"dxp2", "dowstats_balance_mod", "tournamentpatch", "othermod"}
+
 var modTextList = []string{"Dawn of War - Soulstorm", "DoW Stats Balance Mod", "TournamentPatch", "Other mods"}
+
 var OnlineCounter []int32
 
 var Log = logrus.New()
@@ -42,6 +44,7 @@ type UniqUsers struct {
 	UsersYear  int
 	UsersMonth int
 	UsersDay   int
+	UsersTotal int
 }
 
 func main() {
@@ -229,7 +232,7 @@ var mux = sync.Mutex{}
 func countUniqUsers(db *leveldb.DB) UniqUsers {
 	mux.Lock()
 	uniq := UniqUsers{
-		0, 0, 0,
+		0, 0, 0, 0,
 	}
 	iter := db.NewIterator(nil, nil)
 	defer iter.Release()
@@ -241,6 +244,9 @@ func countUniqUsers(db *leveldb.DB) UniqUsers {
 			Log.Errorf("Failed to decode record %s", err.Error())
 		}
 		currentTime := time.Now().Unix()
+		if time.Unix(record.LastPing, 0).Unix() != 0 {
+			uniq.UsersTotal += 1
+		}
 		if time.Unix(record.LastPing, 0).Year() == time.Unix(currentTime, 0).Year() {
 			uniq.UsersYear += 1
 			if time.Unix(record.LastPing, 0).Month() == time.Unix(currentTime, 0).Month() {
@@ -262,7 +268,7 @@ func countUniqUsers(db *leveldb.DB) UniqUsers {
 func getUniq(db *leveldb.DB) gin.HandlerFunc {
 	fn := func(c *gin.Context) {
 		u := countUniqUsers(db)
-		str := fmt.Sprintf("{\"day\": %d, \"month\": %d, \"year\": %d }", u.UsersDay, u.UsersMonth, u.UsersYear)
+		str := fmt.Sprintf("{\"day\": %d, \"month\": %d, \"year\": %d, \"total\": %d }", u.UsersDay, u.UsersMonth, u.UsersYear, u.UsersTotal)
 		c.String(200, str)
 	}
 	return gin.HandlerFunc(fn)
