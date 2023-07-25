@@ -18,7 +18,7 @@ const (
 	testDbName = "test.db"
 )
 
-const (
+var (
 	Q_setRanked1                                                       = setRankedMode + "?sid=1&rankedMode=true"
 	Q_setRanked2                                                       = setRankedMode + "?sid=2&rankedMode=true"
 	Q_setRanked1Unranked                                               = setRankedMode + "?sid=1&rankedMode=false"
@@ -36,13 +36,13 @@ const (
 	Q_ping7tournament                                                  = pingRequest + "?sid=7&" + modParam + "=tournamentpatch"
 	Q_ping8unknown                                                     = pingRequest + "?sid=8&" + modParam + "=superduperpathmod"
 	R_empty                                                            = "[]"
-	R_pingZero                                                         = `[{"onlineCount":0, "modArray": [{"ModName":"dxp2","OnlineCount":0},{"ModName":"dowstats_balance_mod","OnlineCount":0},{"ModName":"tournamentpatch","OnlineCount":0},{"ModName":"othermod","OnlineCount":0}]}]`
-	R_pingNoMod                                                        = `[{"onlineCount":1, "modArray": [{"ModName":"dxp2","OnlineCount":1},{"ModName":"dowstats_balance_mod","OnlineCount":0},{"ModName":"tournamentpatch","OnlineCount":0},{"ModName":"othermod","OnlineCount":0}]}]`
-	R_pingOnlineDxp2_1                                                 = `[{"onlineCount":1, "modArray": [{"ModName":"dxp2","OnlineCount":1},{"ModName":"dowstats_balance_mod","OnlineCount":0},{"ModName":"tournamentpatch","OnlineCount":0},{"ModName":"othermod","OnlineCount":0}]}]`
-	R_pingOnlineDxp2_1_Dowstats_balance_mod_1                          = `[{"onlineCount":2, "modArray": [{"ModName":"dxp2","OnlineCount":1},{"ModName":"dowstats_balance_mod","OnlineCount":1},{"ModName":"tournamentpatch","OnlineCount":0},{"ModName":"othermod","OnlineCount":0}]}]`
-	R_pingOnlineDxp2_2_Dowstats_balance_mod_2                          = `[{"onlineCount":3, "modArray": [{"ModName":"dxp2","OnlineCount":1},{"ModName":"dowstats_balance_mod","OnlineCount":2},{"ModName":"tournamentpatch","OnlineCount":0},{"ModName":"othermod","OnlineCount":0}]}]`
-	R_pingOnlineDxp2_2_Dowstats_balance_mod_2_tournamentpatch_1        = `[{"onlineCount":4, "modArray": [{"ModName":"dxp2","OnlineCount":1},{"ModName":"dowstats_balance_mod","OnlineCount":2},{"ModName":"tournamentpatch","OnlineCount":1},{"ModName":"othermod","OnlineCount":0}]}]`
-	R_pingOnlineDxp2_2_Dowstats_balance_mod_2_tournamentpatch_1_other1 = `[{"onlineCount":5, "modArray": [{"ModName":"dxp2","OnlineCount":1},{"ModName":"dowstats_balance_mod","OnlineCount":2},{"ModName":"tournamentpatch","OnlineCount":1},{"ModName":"othermod","OnlineCount":1}]}]`
+	R_pingZero                                                         = `[{"onlineCount":0, "modArray": [{"ModName":"` + modTextList[0] + `","OnlineCount":0},{"ModName":"` + modTextList[1] + `","OnlineCount":0},{"ModName":"` + modTextList[2] + `","OnlineCount":0},{"ModName":"` + modTextList[3] + `","OnlineCount":0}]}]`
+	R_pingNoMod                                                        = `[{"onlineCount":1, "modArray": [{"ModName":"` + modTextList[0] + `","OnlineCount":1},{"ModName":"` + modTextList[1] + `","OnlineCount":0},{"ModName":"` + modTextList[2] + `","OnlineCount":0},{"ModName":"` + modTextList[3] + `","OnlineCount":0}]}]`
+	R_pingOnlineDxp2_1                                                 = `[{"onlineCount":1, "modArray": [{"ModName":"` + modTextList[0] + `","OnlineCount":1},{"ModName":"` + modTextList[1] + `","OnlineCount":0},{"ModName":"` + modTextList[2] + `","OnlineCount":0},{"ModName":"` + modTextList[3] + `","OnlineCount":0}]}]`
+	R_pingOnlineDxp2_1_Dowstats_balance_mod_1                          = `[{"onlineCount":2, "modArray": [{"ModName":"` + modTextList[0] + `","OnlineCount":1},{"ModName":"` + modTextList[1] + `","OnlineCount":1},{"ModName":"` + modTextList[2] + `","OnlineCount":0},{"ModName":"` + modTextList[3] + `","OnlineCount":0}]}]`
+	R_pingOnlineDxp2_2_Dowstats_balance_mod_2                          = `[{"onlineCount":3, "modArray": [{"ModName":"` + modTextList[0] + `","OnlineCount":1},{"ModName":"` + modTextList[1] + `","OnlineCount":2},{"ModName":"` + modTextList[2] + `","OnlineCount":0},{"ModName":"` + modTextList[3] + `","OnlineCount":0}]}]`
+	R_pingOnlineDxp2_2_Dowstats_balance_mod_2_tournamentpatch_1        = `[{"onlineCount":4, "modArray": [{"ModName":"` + modTextList[0] + `","OnlineCount":1},{"ModName":"` + modTextList[1] + `","OnlineCount":2},{"ModName":"` + modTextList[2] + `","OnlineCount":1},{"ModName":"` + modTextList[3] + `","OnlineCount":0}]}]`
+	R_pingOnlineDxp2_2_Dowstats_balance_mod_2_tournamentpatch_1_other1 = `[{"onlineCount":5, "modArray": [{"ModName":"` + modTextList[0] + `","OnlineCount":1},{"ModName":"` + modTextList[1] + `","OnlineCount":2},{"ModName":"` + modTextList[2] + `","OnlineCount":1},{"ModName":"` + modTextList[3] + `","OnlineCount":1}]}]`
 	R_getRanked4                                                       = `[{"SID":"4","Ranked":true,"Online":true}]`
 	R_getRanked1Fast                                                   = `[{"SID":"1","Ranked":true,"Online":true}]`
 	R_getRanked2Unranked                                               = `[{"SID":"2","Ranked":false,"Online":true}]`
@@ -62,7 +62,7 @@ func TestLoadPing(t *testing.T) {
 	r.GET(":action", getHandler(db))
 
 	for i := 0; i < 100; i++ {
-		httpReqGET(t, r, pingRequest+"?sid="+fmt.Sprint(i), `[{"onlineCount":`+fmt.Sprint(i)+`, "modArray": [{"ModName":"dxp2","OnlineCount":`+fmt.Sprint(i)+`},{"ModName":"dowstats_balance_mod","OnlineCount":0},{"ModName":"tournamentpatch","OnlineCount":0},{"ModName":"othermod","OnlineCount":0}]}]`)
+		httpReqGET(t, r, pingRequest+"?sid="+fmt.Sprint(i), `[{"onlineCount":`+fmt.Sprint(i)+`, "modArray": [{"ModName":"`+modTextList[0]+`","OnlineCount":`+fmt.Sprint(i)+`},{"ModName":"`+modTextList[1]+`","OnlineCount":0},{"ModName":"`+modTextList[2]+`","OnlineCount":0},{"ModName":"`+modTextList[3]+`","OnlineCount":0}]}]`)
 		countOnlineUsers(db, len(OnlineCounter))
 	}
 
