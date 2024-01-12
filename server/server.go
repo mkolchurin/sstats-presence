@@ -47,6 +47,8 @@ type UniqUsers struct {
 	UsersTotal int
 }
 
+var globalUniq UniqUsers
+
 func Run() {
 	Log.Out = os.Stdout
 	Log.SetLevel(logrus.ErrorLevel)
@@ -59,6 +61,16 @@ func Run() {
 		for {
 			countOnlineUsers(db, len(OnlineCounter))
 			time.Sleep(counterSleepSec * time.Second)
+		}
+	}()
+
+	go func() {
+		for {
+			localUniq := countUniqUsers(db)
+			mux.Lock()
+			globalUniq = localUniq
+			mux.Unlock()
+			time.Sleep(60 * time.Second)
 		}
 	}()
 
@@ -234,7 +246,6 @@ func onlineUsersResponse() string {
 var mux = sync.Mutex{}
 
 func countUniqUsers(db *leveldb.DB) UniqUsers {
-	mux.Lock()
 	uniq := UniqUsers{
 		0, 0, 0, 0,
 	}
@@ -265,13 +276,14 @@ func countUniqUsers(db *leveldb.DB) UniqUsers {
 	if err := iter.Error(); err != nil {
 		log.Fatal(err)
 	}
-	mux.Unlock()
 	return uniq
 }
 
 func getUniq(db *leveldb.DB) gin.HandlerFunc {
 	return gin.HandlerFunc(func(c *gin.Context) {
-		u := countUniqUsers(db)
+		mux.Lock()
+		u := globalUniq
+		mux.Unlock()
 		str := fmt.Sprintf("{\"day\": %d, \"month\": %d, \"year\": %d, \"total\": %d }", u.UsersDay, u.UsersMonth, u.UsersYear, u.UsersTotal)
 		c.String(200, str)
 	})
