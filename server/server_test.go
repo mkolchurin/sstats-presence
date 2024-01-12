@@ -1,17 +1,18 @@
-package main
+package server
 
 import (
 	"fmt"
-	"github.com/gin-gonic/gin"
-	"github.com/go-playground/assert/v2"
-	"github.com/sirupsen/logrus"
-	"github.com/syndtr/goleveldb/leveldb"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"sstats-presence/playerStorage"
 	"testing"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/go-playground/assert/v2"
+	"github.com/sirupsen/logrus"
+	"github.com/syndtr/goleveldb/leveldb"
 )
 
 const (
@@ -52,7 +53,7 @@ var (
 )
 
 func TestLoadPing(t *testing.T) {
-	_ = os.Remove(testDbName)
+	_ = os.RemoveAll(testDbName)
 	r := gin.Default()
 	db, err := leveldb.OpenFile(testDbName, nil)
 	if err != nil {
@@ -81,17 +82,17 @@ func TestTime(t *testing.T) {
 	r.GET(":action", getHandler(db))
 
 	//test
-	httpReqGET(t, r, "uniq", "{\"day\": 0, \"month\": 0, \"year\": 0 }")
-	httpReqGET(t, r, "uniq", "{\"day\": 0, \"month\": 0, \"year\": 0 }")
+	httpReqGET(t, r, "uniq", "{\"day\": 0, \"month\": 0, \"year\": 0, \"total\": 0 }")
+	httpReqGET(t, r, "uniq", "{\"day\": 0, \"month\": 0, \"year\": 0, \"total\": 0 }")
 
 	httpReqGET(t, r, Q_ping4, R_pingZero)
-	httpReqGET(t, r, "uniq", "{\"day\": 1, \"month\": 1, \"year\": 1 }")
+	httpReqGET(t, r, "uniq", "{\"day\": 1, \"month\": 1, \"year\": 1, \"total\": 1 }")
 	httpReqGET(t, r, Q_ping4, R_pingZero)
-	httpReqGET(t, r, "uniq", "{\"day\": 1, \"month\": 1, \"year\": 1 }")
+	httpReqGET(t, r, "uniq", "{\"day\": 1, \"month\": 1, \"year\": 1, \"total\": 1 }")
 
 	httpReqGET(t, r, Q_ping3, R_pingZero)
 	httpReqGET(t, r, Q_ping5ModDowstats, R_pingZero)
-	httpReqGET(t, r, "uniq", "{\"day\": 3, \"month\": 3, \"year\": 3 }")
+	httpReqGET(t, r, "uniq", "{\"day\": 3, \"month\": 3, \"year\": 3, \"total\": 3 }")
 
 }
 
