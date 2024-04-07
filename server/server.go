@@ -28,9 +28,9 @@ const (
 	counterSleepSec = 5
 )
 
-var modList = []string{"dxp2", "dowstats_balance_mod", "tournamentpatch", "othermod"}
+var modList = []string{"dxp2", "dowstats_balance_mod", "tournamentpatch", "tribunmod", "othermod"}
 
-var modTextList = []string{"Dawn of War - Soulstorm", "DoW Stats Balance Mod", "TournamentPatch", "Other mods"}
+var modTextList = []string{"Dawn of War - Soulstorm", "DoW Stats Balance Mod", "TournamentPatch", "Tribun mod", "Other mods"}
 
 var OnlineCounter []int32
 
